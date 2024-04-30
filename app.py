@@ -1,15 +1,27 @@
 from flask import Flask, jsonify, request
-
 from flask_sqlalchemy import SQLAlchemy
+from flask_cors import CORS
+from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'teste123'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///ecommerce.db'
 
+login_manager = LoginManager()
 db = SQLAlchemy(app)
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+CORS(app)
 
 # Modelagem
-# Medicamento (id, nome, nomeGenerico, quantidade, medida, tipoMedida, dataCadastro, status)
+# Usuário ( id, nome, senha)
+class Usuario(db.Model, UserMixin):
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(80), nullable=False, unique=True)
+    senha = db.Column(db.String(80), nullable=False)
 
+
+# Medicamento (id, nome, nomeGenerico, quantidade, medida, tipoMedida, dataCadastro, status)
 class Medicamento(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     nome = db.Column(db.String(50), nullable=False)
@@ -21,7 +33,31 @@ class Medicamento(db.Model):
     dataAtualizacao = db.Column(db.Date, nullable=False)
     status = db.Column(db.String(10), nullable=False)
 
+# Rotas
+# Autenticação
+@login_manager.user_loader
+def load_user(user_id):
+    return Usuario.query.get(user_id)
+
+@app.route('/login', methods=["POST"])
+def login():
+    data = request.json
+    
+    usuario = Usuario.query.filter_by(nome = data.get("nome")).first()
+
+    if usuario and data.get("senha") == usuario.senha:
+            login_user(usuario)
+            return jsonify({"message": "Bem vindo ao Medication Control"})
+    return jsonify({"message": "Credenciais inválidas"}), 401
+
+@app.route('/logout', methods=["POST"])
+@login_required
+def logout():
+    logout_user()
+    return jsonify({"message": "Logout efetuado com sucesso"})
+
 @app.route('/api/medicamento/adicionar', methods=["POST"])
+@login_required
 def adicionar_medicamento():
     data = request.json
     if 'nome'in data and 'nomeGenerico' in data and 'quantidade' in data and 'medida' in data and 'tipoMedida' in data and 'dataCadastro' in data:
@@ -32,6 +68,7 @@ def adicionar_medicamento():
     return jsonify({"message": "É necessário preencher os dados obrigatórios"}), 400
 
 @app.route('/api/medicamento/deletar<int:id>', methods=["DELETE"])
+@login_required
 def deletar_medicamento(id):
     medicamento = Medicamento.query.get(id)
     if medicamento:
@@ -41,6 +78,7 @@ def deletar_medicamento(id):
     return jsonify({"message": "Medicamento não encontrado"}), 404
 
 @app.route('/api/medicamento/pesquisar<int:id>', methods=["GET"])
+@login_required
 def pesquisar_medicamento_id(id):
     medicamento = Medicamento.query.get(id)
     if medicamento:
@@ -58,6 +96,7 @@ def pesquisar_medicamento_id(id):
     return jsonify({"message": "Medicamento não encontrado"}), 404
 
 @app.route('/api/medicamento/atualizar<int:id>', methods=["PUT"])
+@login_required
 def atualizar_medicamento(id):
     medicamento = Medicamento.query.get(id)
     if not medicamento:
@@ -89,6 +128,7 @@ def atualizar_medicamento(id):
     return jsonify({"message": "Medicamento atualizado com sucesso"})
 
 @app.route('/api/medicamentos', methods=['GET'])
+@login_required
 def pequisa_medicamentos():
     medicamentos = Medicamento.query.all()
     medicamento_list = []
