@@ -1,7 +1,10 @@
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+from werkzeug.security import check_password_hash
 from flask_login import UserMixin, login_user, LoginManager, login_required, logout_user
+from datetime import datetime, date
+from werkzeug.security import generate_password_hash
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'teste123'
@@ -43,45 +46,79 @@ def load_user(user_id):
 def login():
     data = request.json
     
-    usuario = Usuario.query.filter_by(nome = data.get("nome")).first()
+    usuario = Usuario.query.filter_by(nome=data.get("nome")).first()
 
-    if usuario and data.get("senha") == usuario.senha:
-            login_user(usuario)
-            return jsonify({"message": "Bem vindo ao Medication Control"})
+    if usuario and check_password_hash(usuario.senha, data.get("senha")):
+        login_user(usuario)
+        return jsonify({"message": "Bem vindo ao Medication Control"})
+    
     return jsonify({"message": "Credenciais inválidas"}), 401
 
 @app.route('/logout', methods=["POST"])
-@login_required
+# @login_required
 def logout():
     logout_user()
     return jsonify({"message": "Logout efetuado com sucesso"})
 
 @app.route('/api/medicamento/adicionar', methods=["POST"])
-@login_required
+# @login_required
 def adicionar_medicamento():
-    data = request.json
-    if 'nome'in data and 'nomeGenerico' in data and 'quantidade' in data and 'medida' in data and 'tipoMedida' in data and 'dataCadastro' in data:
-        medicamento = Medicamento(nome=data["nome"], nomeGenerico=data["nomeGenerico"], quantidade=data["quantidade"], medida=data["medida"], tipoMedida=data["tipoMedida"], dataCadastro=data["dataCadastro"], status="Ativo")
+    try:
+        data = request.json
+
+        if isinstance(data.get("dataCadastro"), str):
+            data["dataCadastro"] = datetime.strptime(data["dataCadastro"], "%Y-%m-%d").date()
+
+        if "dataAtualizacao" in data and isinstance(data["dataAtualizacao"], str):
+            data["dataAtualizacao"] = datetime.strptime(data["dataAtualizacao"], "%Y-%m-%d").date()
+        else:
+            data["dataAtualizacao"] = date.today()
+
+        obrigatorios = ["nome", "nomeGenerico", "quantidade", "medida", "tipoMedida", "dataCadastro", "status"]
+        if not all(campo in data for campo in obrigatorios):
+            return jsonify({"message": "É necessário preencher todos os dados obrigatórios"}), 400
+
+        medicamento = Medicamento(
+            nome=data["nome"],
+            nomeGenerico=data["nomeGenerico"],
+            quantidade=data["quantidade"],
+            medida=data["medida"],
+            tipoMedida=data["tipoMedida"],
+            dataCadastro=data["dataCadastro"],
+            dataAtualizacao=data["dataAtualizacao"],
+            status=data["status"]
+        )
+
         db.session.add(medicamento)
         db.session.commit()
+
         return jsonify({"message": "Medicamento cadastrado com sucesso"}), 200
-    return jsonify({"message": "É necessário preencher os dados obrigatórios"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-@app.route('/api/medicamento/deletar<int:id>', methods=["DELETE"])
-@login_required
+@app.route('/api/medicamento/deletar/<int:id>', methods=["DELETE"])
+# @login_required
 def deletar_medicamento(id):
-    medicamento = Medicamento.query.get(id)
-    if medicamento:
-        db.session.delete(medicamento)
-        db.session.commit()
-        return jsonify({"message": "Medicamento deletado com sucesso!"})
-    return jsonify({"message": "Medicamento não encontrado"}), 404
+    try:
+        medicamento = Medicamento.query.get(id)
+        if not medicamento:
+            return jsonify({"message": "Medicamento não encontrado"}), 404
+        if medicamento:
+            db.session.delete(medicamento)
+            db.session.commit()
+            return jsonify({"message": "Medicamento deletado com sucesso!"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+        
 
-@app.route('/api/medicamento/pesquisar<int:id>', methods=["GET"])
-@login_required
+
+@app.route('/api/medicamento/pesquisar/<int:id>', methods=["GET"])
+# @login_required
 def pesquisar_medicamento_id(id):
-    medicamento = Medicamento.query.get(id)
-    if medicamento:
+    try:
+        medicamento = Medicamento.query.get(id)
+        if not medicamento:
+            return jsonify({"message": "Medicamento não encontrado"}), 404
         return jsonify({
             "id": medicamento.id,
             "nome": medicamento.nome,
@@ -93,16 +130,21 @@ def pesquisar_medicamento_id(id):
             "dataAtualizacao": medicamento.dataAtualizacao,
             "status": medicamento.status
         })
-    return jsonify({"message": "Medicamento não encontrado"}), 404
+    except Exception as e:
+        return jsonify({"error": "Erro ao processar a requisição", "details": str(e)}), 500
 
-@app.route('/api/medicamento/atualizar<int:id>', methods=["PUT"])
-@login_required
+@app.route('/api/medicamento/atualizar/<int:id>', methods=["PUT"])
+# @login_required
 def atualizar_medicamento(id):
     medicamento = Medicamento.query.get(id)
     if not medicamento:
         return jsonify({"message": "Medicamento não encontrado"}), 404
     
     data = request.json
+    
+    if not data:
+        return jsonify({"message": "Nenhum dado fornecido"}), 400
+
     if 'nome' in data:
         medicamento.nome = data['nome']
 
@@ -112,41 +154,59 @@ def atualizar_medicamento(id):
     if 'quantidade' in data:
         medicamento.quantidade = data['quantidade']
     
-    if 'medida'in data:
+    if 'medida' in data:
         medicamento.medida = data['medida']
 
-    if 'tipoMedida'in data:
+    if 'tipoMedida' in data:
         medicamento.tipoMedida = data['tipoMedida']
 
-    if 'dataAtualizacao'in data:
-        medicamento.dataAtualizacao = data['dataAtualizacao']
-
-    if 'status'in data:
+    if 'status' in data:
         medicamento.status = data['status']
 
-    db.session.commit()
-    return jsonify({"message": "Medicamento atualizado com sucesso"})
+    medicamento.dataAtualizacao = datetime.utcnow()
 
-@app.route('/api/medicamentos', methods=['GET'])
-@login_required
-def pequisa_medicamentos():
-    medicamentos = Medicamento.query.all()
-    medicamento_list = []
-    for medicamento in medicamentos:
-        medicamento_data = {
-            "id": medicamento.id,
-            "nome": medicamento.nome,
-            "nomeGenerico": medicamento.nomeGenerico,
-            "quantidade": medicamento.quantidade,
-            "medida": medicamento.medida,
-            "tipoMedida": medicamento.tipoMedida,
-            "dataCadastro": medicamento.dataCadastro,
-            "dataAtualizacao": medicamento.dataAtualizacao,
-            "status": medicamento.status
-        }
-        medicamento_list.append(medicamento_data)
+    try:
+        db.session.commit()
+        return jsonify({"message": "Medicamento atualizado com sucesso"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"message": f"Erro ao atualizar medicamento: {str(e)}"}), 500
     
-    return jsonify(medicamento_list)
+@app.route('/api/medicamentos', methods=['GET'])
+# @login_required
+def pesquisa_medicamentos():
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 10, type=int)
+
+        medicamentos = Medicamento.query.paginate(page, per_page, error_out=False)
+
+        medicamento_list = []
+        for medicamento in medicamentos.items:
+            medicamento_data = {
+                "id": medicamento.id,
+                "nome": medicamento.nome,
+                "nomeGenerico": medicamento.nomeGenerico,
+                "quantidade": medicamento.quantidade,
+                "medida": medicamento.medida,
+                "tipoMedida": medicamento.tipoMedida,
+                "dataCadastro": medicamento.dataCadastro,
+                "dataAtualizacao": medicamento.dataAtualizacao,
+                "status": medicamento.status
+            }
+            medicamento_list.append(medicamento_data)
+        
+        return jsonify({
+            "medicamentos": medicamento_list,
+            "total": medicamentos.total,
+            "pages": medicamentos.pages,
+            "current_page": medicamentos.page
+        })
+
+    except Exception as e:
+        return jsonify({"message": f"Erro ao recuperar medicamentos: {str(e)}"}), 500
+
+
 # Definição de rota raiz
 @app.route('/')
 def hello_world():
